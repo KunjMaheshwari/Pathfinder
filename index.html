@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pathfinder — watch search algorithms think</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --abyss: #070b16;
+    --midnight: #0d1426;
+    --surface: #111a30;
+    --line: #1b2540;
+    --mist: #e7ecf6;
+    --fog: #8092b0;
+    --faint: #5d6a88;
+    --emerald: #10b981;
+    --rose: #fb5071;
+    --amber: #f59e0b;
+    --signal: #22d3ee;
+    --pulse: #3b82f6;
+    --violet: #4f46e5;
+    --radius: 12px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--abyss);
+    color: var(--mist);
+    font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100%;
+  }
+
+  body {
+    background:
+      radial-gradient(900px 520px at 50% -120px, rgba(79,70,229,0.18), transparent 70%),
+      radial-gradient(700px 460px at 88% 110%, rgba(34,211,238,0.08), transparent 65%),
+      var(--abyss);
+  }
+
+  .app {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 24px 40px;
+  }
+
+  /* ---------- Header / telemetry ---------- */
+  .topbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+
+  .brand { display: flex; align-items: center; gap: 14px; }
+
+  .glyph {
+    position: relative;
+    width: 38px; height: 38px;
+    flex: none;
+  }
+  .glyph .core {
+    position: absolute; inset: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 40%, #7dd3fc, var(--signal));
+    box-shadow: 0 0 14px rgba(34,211,238,0.7);
+  }
+  .glyph .ring {
+    position: absolute; inset: 6px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(34,211,238,0.55);
+    animation: sonar 2.4s ease-out infinite;
+  }
+  .glyph .ring.b { animation-delay: 1.2s; }
+  @keyframes sonar {
+    0% { transform: scale(0.55); opacity: 0.9; }
+    100% { transform: scale(1.35); opacity: 0; }
+  }
+
+  .brand h1 {
+    margin: 0;
+    font-size: 20px;
+    letter-spacing: 0.22em;
+    font-weight: 700;
+  }
+  .brand p {
+    margin: 2px 0 0;
+    font-size: 12.5px;
+    color: var(--fog);
+    letter-spacing: 0.02em;
+  }
+
+  .telemetry {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .stat {
+    background: linear-gradient(180deg, var(--surface), var(--midnight));
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 14px;
+    min-width: 92px;
+  }
+  .stat .k {
+    font-size: 9.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fog);
+    font-weight: 600;
+  }
+  .stat .v {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 18px;
+    font-weight: 600;
+    margin-top: 3px;
+    line-height: 1;
+  }
+  .v.explored { color: #8b8bf6; }
+  .v.path { color: var(--amber); }
+  .v.status { font-size: 14px; }
+  .v.status[data-s="idle"]    { color: var(--fog); }
+  .v.status[data-s="search"]  { color: var(--signal); }
+  .v.status[data-s="found"]   { color: var(--emerald); }
+  .v.status[data-s="none"]    { color: var(--rose); }
+
+  /* ---------- Controls ---------- */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 14px 16px;
+    background: linear-gradient(180deg, rgba(17,26,48,0.85), rgba(13,20,38,0.85));
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    backdrop-filter: blur(6px);
+  }
+
+  .ctl-label {
+    font-size: 9.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fog);
+    font-weight: 600;
+    margin-right: -4px;
+  }
+
+  .seg {
+    display: inline-flex;
+    background: var(--abyss);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .seg button {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--fog);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+    letter-spacing: 0.01em;
+  }
+  .seg button:hover { color: var(--mist); }
+  .seg button.active {
+    color: #07101f;
+    background: linear-gradient(180deg, #6ee7ff, var(--signal));
+    box-shadow: 0 1px 8px rgba(34,211,238,0.35);
+    font-weight: 600;
+  }
+
+  .divider { width: 1px; height: 26px; background: var(--line); }
+
+  .btn {
+    appearance: none;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--mist);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: transform 0.12s ease, border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  }
+  .btn:hover {
+    transform: translateY(-1px);
+    border-color: #2c3a5e;
+    background: #15203a;
+  }
+  .btn:active { transform: translateY(0); }
+
+  .btn-primary {
+    color: #07101f;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    border: none;
+    background: linear-gradient(120deg, var(--signal), var(--violet));
+    box-shadow: 0 4px 18px rgba(79,70,229,0.45), 0 0 0 1px rgba(110,231,255,0.25) inset;
+    padding: 9px 20px;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(79,70,229,0.6); }
+  .btn-primary[disabled],
+  .btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .btn:focus-visible, .seg button:focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+
+  .algo-caption {
+    margin: 12px 2px 0;
+    font-size: 12.5px;
+    color: var(--fog);
+    letter-spacing: 0.01em;
+    min-height: 16px;
+  }
+  .algo-caption b { color: #a9b6d4; font-weight: 600; }
+
+  /* ---------- Grid ---------- */
+  .stage {
+    margin-top: 16px;
+    position: relative;
+    padding: 14px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(10,15,28,0.6), rgba(7,11,22,0.6));
+    border: 1px solid var(--line);
+    box-shadow: 0 30px 80px -40px rgba(34,211,238,0.25);
+  }
+
+  .grid {
+    display: grid;
+    gap: 1px;
+    background: #131c33;
+    border: 1px solid #1f2c4a;
+    border-radius: 8px;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .cell {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    background: #0a1326;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+  .cell:hover { background: #14213e; }
+
+  .cell.wall {
+    background: linear-gradient(145deg, #2c3b5e, #131d33);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    animation: wallpop 0.18s ease;
+  }
+  @keyframes wallpop { 0% { transform: scale(0.55); } 100% { transform: scale(1); } }
+
+  .cell.visited {
+    background: var(--violet);
+    animation: bloom 1.25s ease forwards;
+  }
+  @keyframes bloom {
+    0%   { transform: scale(0.32); background: #7df0ff; border-radius: 45%; }
+    42%  { transform: scale(1.18); background: var(--signal); }
+    72%  { background: var(--pulse); border-radius: 12%; }
+    100% { transform: scale(1); background: var(--violet); border-radius: 2px; }
+  }
+
+  .cell.path {
+    background: var(--amber);
+    box-shadow: 0 0 10px rgba(245,158,11,0.7);
+    border-radius: 2px;
+    z-index: 1;
+    animation: pop 0.35s ease forwards;
+  }
+  @keyframes pop {
+    0%   { transform: scale(0.4);  background: #fff3c4; }
+    55%  { transform: scale(1.28); background: #fcd34d; }
+    100% { transform: scale(1);    background: var(--amber); }
+  }
+  .grid.instant .cell.path { animation: none; }
+
+  .cell.start, .cell.end { z-index: 2; }
+  .cell.start {
+    background: radial-gradient(circle at 50% 38%, #6ee7b7, var(--emerald));
+    box-shadow: 0 0 16px rgba(16,185,129,0.65);
+  }
+  .cell.start::after {
+    content: ""; position: absolute; inset: 32%;
+    border-radius: 50%; background: rgba(255,255,255,0.92);
+  }
+  .cell.end {
+    background: radial-gradient(circle at 50% 38%, #fda4b4, var(--rose));
+    box-shadow: 0 0 16px rgba(251,80,113,0.6);
+  }
+  .cell.end::after {
+    content: ""; position: absolute; inset: 26%;
+    border-radius: 50%; border: 2px solid rgba(255,255,255,0.9);
+    animation: targetpulse 1.6s ease-in-out infinite;
+  }
+  @keyframes targetpulse {
+    0%,100% { transform: scale(0.78); opacity: 0.65; }
+    50%     { transform: scale(1.05); opacity: 1; }
+  }
+
+  /* ---------- Legend / footer ---------- */
+  .footer {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; }
+  .lg { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--fog); }
+  .sw { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+  .sw.start { background: radial-gradient(circle at 50% 38%, #6ee7b7, var(--emerald)); }
+  .sw.end   { background: radial-gradient(circle at 50% 38%, #fda4b4, var(--rose)); }
+  .sw.wall  { background: linear-gradient(145deg, #2c3b5e, #131d33); }
+  .sw.visited { background: var(--violet); }
+  .sw.path  { background: var(--amber); }
+
+  .hint {
+    font-size: 12px;
+    color: var(--faint);
+    letter-spacing: 0.01em;
+  }
+
+  @media (max-width: 620px) {
+    .brand h1 { font-size: 17px; }
+    .stat { min-width: 78px; padding: 6px 10px; }
+    .controls { gap: 8px; padding: 12px; }
+    .divider { display: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cell.visited, .cell.path, .cell.wall { animation: none !important; }
+    .glyph .ring, .cell.end::after { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="glyph" aria-hidden="true">
+          <span class="ring"></span>
+          <span class="ring b"></span>
+          <span class="core"></span>
+        </div>
+        <div>
+          <h1>PATHFINDER</h1>
+          <p>Watch search algorithms think.</p>
+        </div>
+      </div>
+      <div class="telemetry" aria-live="polite">
+        <div class="stat"><div class="k">Algorithm</div><div class="v" id="t-algo">A*</div></div>
+        <div class="stat"><div class="k">Explored</div><div class="v explored" id="t-explored">0</div></div>
+        <div class="stat"><div class="k">Path</div><div class="v path" id="t-path">—</div></div>
+        <div class="stat"><div class="k">Status</div><div class="v status" id="t-status" data-s="idle">Idle</div></div>
+      </div>
+    </header>
+
+    <div class="controls">
+      <span class="ctl-label">Algorithm</span>
+      <div class="seg" id="algoSeg" role="group" aria-label="Algorithm">
+        <button data-algo="bfs">BFS</button>
+        <button data-algo="dfs">DFS</button>
+        <button data-algo="dijkstra">Dijkstra</button>
+        <button data-algo="astar" class="active">A*</button>
+      </div>
+
+      <span class="ctl-label">Speed</span>
+      <div class="seg" id="speedSeg" role="group" aria-label="Speed">
+        <button data-speed="slow">Slow</button>
+        <button data-speed="normal" class="active">Normal</button>
+        <button data-speed="fast">Fast</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <button class="btn btn-primary" id="btnRun">Visualize</button>
+      <button class="btn" id="btnMaze">Generate maze</button>
+      <button class="btn" id="btnClearPath">Clear path</button>
+      <button class="btn" id="btnClearWalls">Clear walls</button>
+      <button class="btn" id="btnReset">Reset</button>
+    </div>
+
+    <div class="algo-caption" id="caption"></div>
+
+    <div class="stage">
+      <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="footer">
+      <div class="legend">
+        <span class="lg"><span class="sw start"></span>Source</span>
+        <span class="lg"><span class="sw end"></span>Target</span>
+        <span class="lg"><span class="sw wall"></span>Wall</span>
+        <span class="lg"><span class="sw visited"></span>Explored</span>
+        <span class="lg"><span class="sw path"></span>Shortest path</span>
+      </div>
+      <div class="hint">Drag to build walls · drag the source or target to move them</div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Configuration ----------
+  const ROWS = 23, COLS = 43;
+  const DEFAULT_START = { r: 11, c: 9 };
+  const DEFAULT_END   = { r: 11, c: 33 };
+  const SPEED = { slow: 42, normal: 16, fast: 5 };
+  const PATH_DELAY = 26;
+
+  const REDUCED = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const ALGO_INFO = {
+    bfs:      { name: "BFS",      text: "explores the grid in expanding rings — <b>guarantees the shortest path</b> on an unweighted grid." },
+    dfs:      { name: "DFS",      text: "dives as deep as it can before backtracking — <b>does not guarantee the shortest path</b>." },
+    dijkstra: { name: "Dijkstra", text: "expands by lowest accumulated cost — <b>guarantees the shortest path</b>; here it mirrors BFS since every step costs 1." },
+    astar:    { name: "A*",       text: "steers toward the target using a Manhattan heuristic — <b>guarantees the shortest path</b> while exploring far fewer cells." }
+  };
+
+  // ---------- State ----------
+  let grid = [];          // grid[r][c] = { isWall }
+  let cellEls = [];       // cellEls[r][c] = DOM node
+  let start = { ...DEFAULT_START };
+  let end = { ...DEFAULT_END };
+  let algo = "astar";
+  let speed = "normal";
+
+  let running = false;
+  let runId = 0;          // cancels stale timeouts
+  let hasResult = false;
+  let prevPath = [];      // for fast clearing during live drag
+
+  // drag state
+  let pointerDown = false;
+  let dragMode = null;    // 'wall' | 'erase' | 'moveStart' | 'moveEnd'
+
+  // ---------- DOM refs ----------
+  const gridEl = document.getElementById("grid");
+  const tAlgo = document.getElementById("t-algo");
+  const tExplored = document.getElementById("t-explored");
+  const tPath = document.getElementById("t-path");
+  const tStatus = document.getElementById("t-status");
+  const caption = document.getElementById("caption");
+  const btnRun = document.getElementById("btnRun");
+  const controlBtns = [btnRun,
+    document.getElementById("btnMaze"),
+    document.getElementById("btnClearPath"),
+    document.getElementById("btnClearWalls"),
+    document.getElementById("btnReset")];
+
+  // ---------- Build grid ----------
+  function buildGrid() {
+    grid = [];
+    cellEls = [];
+    gridEl.innerHTML = "";
+    gridEl.style.gridTemplateColumns = "repeat(" + COLS + ", 1fr)";
+
+    for (let r = 0; r < ROWS; r++) {
+      const rowNodes = [];
+      const rowEls = [];
+      for (let c = 0; c < COLS; c++) {
+        rowNodes.push({ isWall: false });
+        const el = document.createElement("div");
+        el.className = "cell";
+        el.dataset.r = r;
+        el.dataset.c = c;
+        gridEl.appendChild(el);
+        rowEls.push(el);
+      }
+      grid.push(rowNodes);
+      cellEls.push(rowEls);
+    }
+    paintEndpoints();
+  }
+
+  function paintEndpoints() {
+    cellEls[start.r][start.c].classList.add("start");
+    cellEls[end.r][end.c].classList.add("end");
+  }
+
+  // ---------- Helpers ----------
+  const isStart = (r, c) => r === start.r && c === start.c;
+  const isEnd = (r, c) => r === end.r && c === end.c;
+
+  function make2D(val) {
+    const a = new Array(ROWS);
+    for (let r = 0; r < ROWS; r++) {
+      a[r] = new Array(COLS);
+      for (let c = 0; c < COLS; c++) a[r][c] = val;
+    }
+    return a;
+  }
+
+  function neighbors(node) {
+    const { r, c } = node;
+    const out = [];
+    if (r > 0) out.push({ r: r - 1, c });        // up
+    if (c < COLS - 1) out.push({ r, c: c + 1 }); // right
+    if (r < ROWS - 1) out.push({ r: r + 1, c }); // down
+    if (c > 0) out.push({ r, c: c - 1 });        // left
+    return out;
+  }
+
+  function setWall(r, c, val) {
+    if (isStart(r, c) || isEnd(r, c)) return;
+    grid[r][c].isWall = val;
+    const el = cellEls[r][c];
+    el.classList.toggle("wall", val);
+    if (val) el.classList.remove("visited", "path");
+  }
+
+  function cellFromPoint(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el || !el.classList.contains("cell")) return null;
+    return { r: +el.dataset.r, c: +el.dataset.c, el };
+  }
+
+  function setControlsEnabled(on) {
+    controlBtns.forEach(b => { b.disabled = !on; });
+    document.querySelectorAll("#algoSeg button, #speedSeg button")
+      .forEach(b => { b.disabled = !on; });
+  }
+
+  function setStatus(text, s) {
+    tStatus.textContent = text;
+    tStatus.dataset.s = s;
+  }
+
+  // ---------- Search algorithms ----------
+  // Each returns { visited:[{r,c}...], path:[{r,c}...] (incl. start & end, [] if unreachable) }
+
+  function buildPath(prev) {
+    if (isStart(end.r, end.c)) return [start];
+    if (prev[end.r][end.c] === null) return [];
+    const path = [];
+    let cur = { r: end.r, c: end.c };
+    while (cur) {
+      path.unshift(cur);
+      if (isStart(cur.r, cur.c)) break;
+      cur = prev[cur.r][cur.c];
+    }
+    return (path.length && isStart(path[0].r, path[0].c)) ? path : [];
+  }
+
+  function bfs() {
+    const seen = make2D(false), prev = make2D(null), visited = [];
+    const q = [{ r: start.r, c: start.c }];
+    seen[start.r][start.c] = true;
+    let head = 0;
+    while (head < q.length) {
+      const cur = q[head++];
+      visited.push(cur);
+      if (isEnd(cur.r, cur.c)) break;
+      for (const nb of neighbors(cur)) {
+        if (!seen[nb.r][nb.c] && !grid[nb.r][nb.c].isWall) {
+          seen[nb.r][nb.c] = true;
+          prev[nb.r][nb.c] = cur;
+          q.push(nb);
+        }
+      }
+    }
+    return { visited, path: buildPath(prev) };
+  }
+
+  function dfs() {
+    const seen = make2D(false), prev = make2D(null), visited = [];
+    const stack = [{ node: { r: start.r, c: start.c }, from: null }];
+    while (stack.length) {
+      const { node: cur, from } = stack.pop();
+      if (seen[cur.r][cur.c] || grid[cur.r][cur.c].isWall) continue;
+      seen[cur.r][cur.c] = true;
+      prev[cur.r][cur.c] = from;
+      visited.push(cur);
+      if (isEnd(cur.r, cur.c)) break;
+      const nbs = neighbors(cur);
+      for (let i = nbs.length - 1; i >= 0; i--) {
+        const nb = nbs[i];
+        if (!seen[nb.r][nb.c] && !grid[nb.r][nb.c].isWall) {
+          stack.push({ node: nb, from: cur });
+        }
+      }
+    }
+    return { visited, path: buildPath(prev) };
+  }
+
+  function weighted(useHeuristic) {
+    const g = make2D(Infinity), prev = make2D(null), done = make2D(false), visited = [];
+    const h = useHeuristic
+      ? (r, c) => Math.abs(r - end.r) + Math.abs(c - end.c)
+      : () => 0;
+    g[start.r][start.c] = 0;
+    const open = [{ r: start.r, c: start.c }];
+    while (open.length) {
+      let bi = 0;
+      const f = i => g[open[i].r][open[i].c] + h(open[i].r, open[i].c);
+      for (let i = 1; i < open.length; i++) if (f(i) < f(bi)) bi = i;
+      const cur = open.splice(bi, 1)[0];
+      if (done[cur.r][cur.c]) continue;
+      done[cur.r][cur.c] = true;
+      visited.push(cur);
+      if (isEnd(cur.r, cur.c)) break;
+      for (const nb of neighbors(cur)) {
+        if (grid[nb.r][nb.c].isWall || done[nb.r][nb.c]) continue;
+        const ng = g[cur.r][cur.c] + 1;
+        if (ng < g[nb.r][nb.c]) {
+          g[nb.r][nb.c] = ng;
+          prev[nb.r][nb.c] = cur;
+          open.push(nb);
+        }
+      }
+    }
+    return { visited, path: buildPath(prev) };
+  }
+
+  function runAlgo() {
+    if (algo === "bfs") return bfs();
+    if (algo === "dfs") return dfs();
+    if (algo === "dijkstra") return weighted(false);
+    return weighted(true); // astar
+  }
+
+  // ---------- Clearing ----------
+  function clearVisualization() {
+    runId++; // cancel pending timeouts
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++)
+        cellEls[r][c].classList.remove("visited", "path");
+    gridEl.classList.remove("instant");
+    prevPath = [];
+    hasResult = false;
+    tExplored.textContent = "0";
+    tPath.textContent = "—";
+    setStatus("Idle", "idle");
+  }
+
+  function clearWalls() {
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++)
+        if (grid[r][c].isWall) setWall(r, c, false);
+    clearVisualization();
+  }
+
+  function resetAll() {
+    clearWalls();
+    cellEls[start.r][start.c].classList.remove("start");
+    cellEls[end.r][end.c].classList.remove("end");
+    start = { ...DEFAULT_START };
+    end = { ...DEFAULT_END };
+    paintEndpoints();
+  }
+
+  // ---------- Full animated run ----------
+  function visualize() {
+    if (running) return;
+    // keep walls, drop previous result
+    runId++;
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++)
+        cellEls[r][c].classList.remove("visited", "path");
+    gridEl.classList.remove("instant");
+
+    running = true;
+    setControlsEnabled(false);
+    btnRun.textContent = "Searching…";
+    setStatus("Searching…", "search");
+    tPath.textContent = "—";
+
+    const myId = ++runId;
+    const { visited, path } = runAlgo();
+    const stepDelay = REDUCED ? 0 : SPEED[speed];
+
+    // Animate explored cells in discovery order
+    let explored = 0;
+    for (let i = 0; i < visited.length; i++) {
+      const { r, c } = visited[i];
+      setTimeout(() => {
+        if (myId !== runId) return;
+        explored++;
+        tExplored.textContent = explored;
+        if (!isStart(r, c) && !isEnd(r, c)) {
+          cellEls[r][c].classList.add("visited");
+        }
+      }, i * stepDelay);
+    }
+
+    const afterExplore = visited.length * stepDelay;
+    setTimeout(() => {
+      if (myId !== runId) return;
+      if (!path.length) {
+        finishRun();
+        setStatus("No path", "none");
+        tPath.textContent = "0";
+        return;
+      }
+      animatePath(path, myId);
+    }, afterExplore + (REDUCED ? 0 : 80));
+  }
+
+  function animatePath(path, myId) {
+    const inner = path.filter(p => !isStart(p.r, p.c) && !isEnd(p.r, p.c));
+    const d = REDUCED ? 0 : PATH_DELAY;
+    inner.forEach((p, i) => {
+      setTimeout(() => {
+        if (myId !== runId) return;
+        cellEls[p.r][p.c].classList.add("path");
+      }, i * d);
+    });
+    setTimeout(() => {
+      if (myId !== runId) return;
+      finishRun();
+      hasResult = true;
+      prevPath = inner;
+      // path "length" = number of steps between source and target
+      tPath.textContent = (path.length - 1);
+      setStatus("Path found", "found");
+    }, inner.length * d + (REDUCED ? 0 : 40));
+  }
+
+  function finishRun() {
+    running = false;
+    setControlsEnabled(true);
+    btnRun.textContent = "Visualize";
+  }
+
+  // ---------- Live (instant) re-solve while dragging a node ----------
+  function renderPathOnly() {
+    // remove only the previous path cells (cheap)
+    for (const p of prevPath) cellEls[p.r][p.c].classList.remove("path");
+    gridEl.classList.add("instant");
+
+    const { visited, path } = runAlgo();
+    tExplored.textContent = visited.length;
+
+    if (!path.length) {
+      prevPath = [];
+      tPath.textContent = "0";
+      setStatus("No path", "none");
+      return;
+    }
+    const inner = path.filter(p => !isStart(p.r, p.c) && !isEnd(p.r, p.c));
+    for (const p of inner) cellEls[p.r][p.c].classList.add("path");
+    prevPath = inner;
+    tPath.textContent = (path.length - 1);
+    setStatus("Path found", "found");
+  }
+
+  // ---------- Maze generation (recursive division) ----------
+  function generateMaze() {
+    if (running) return;
+    clearWalls();
+
+    // outer border
+    for (let c = 0; c < COLS; c++) { setWall(0, c, true); setWall(ROWS - 1, c, true); }
+    for (let r = 0; r < ROWS; r++) { setWall(r, 0, true); setWall(r, COLS - 1, true); }
+
+    divide(1, ROWS - 2, 1, COLS - 2);
+
+    // guarantee source & target stay open and connected
+    setWall(start.r, start.c, false);
+    setWall(end.r, end.c, false);
+    if (!reachable()) carveCorridor();
+  }
+
+  function divide(r1, r2, c1, c2) {
+    const height = r2 - r1 + 1, width = c2 - c1 + 1;
+    if (height < 2 || width < 2) return;
+    const horizontal = height > width ? true : (width > height ? false : Math.random() < 0.5);
+
+    if (horizontal) {
+      const wallRows = [];
+      for (let r = r1 + 1; r <= r2 - 1; r += 2) wallRows.push(r);
+      if (!wallRows.length) return;
+      const wr = wallRows[(Math.random() * wallRows.length) | 0];
+      const gaps = [];
+      for (let c = c1; c <= c2; c += 2) gaps.push(c);
+      const gap = gaps[(Math.random() * gaps.length) | 0];
+      for (let c = c1; c <= c2; c++) if (c !== gap) setWall(wr, c, true);
+      divide(r1, wr - 1, c1, c2);
+      divide(wr + 1, r2, c1, c2);
+    } else {
+      const wallCols = [];
+      for (let c = c1 + 1; c <= c2 - 1; c += 2) wallCols.push(c);
+      if (!wallCols.length) return;
+      const wc = wallCols[(Math.random() * wallCols.length) | 0];
+      const gaps = [];
+      for (let r = r1; r <= r2; r += 2) gaps.push(r);
+      const gap = gaps[(Math.random() * gaps.length) | 0];
+      for (let r = r1; r <= r2; r++) if (r !== gap) setWall(r, wc, true);
+      divide(r1, r2, c1, wc - 1);
+      divide(r1, r2, wc + 1, c2);
+    }
+  }
+
+  function reachable() {
+    const seen = make2D(false);
+    const q = [{ r: start.r, c: start.c }];
+    seen[start.r][start.c] = true;
+    let head = 0;
+    while (head < q.length) {
+      const cur = q[head++];
+      if (isEnd(cur.r, cur.c)) return true;
+      for (const nb of neighbors(cur)) {
+        if (!seen[nb.r][nb.c] && !grid[nb.r][nb.c].isWall) {
+          seen[nb.r][nb.c] = true;
+          q.push(nb);
+        }
+      }
+    }
+    return false;
+  }
+
+  function carveCorridor() {
+    const r = start.r;
+    const cStep = end.c >= start.c ? 1 : -1;
+    for (let c = start.c; c !== end.c + cStep; c += cStep) setWall(r, c, false);
+    const rStep = end.r >= start.r ? 1 : -1;
+    for (let rr = start.r; rr !== end.r + rStep; rr += rStep) setWall(rr, end.c, false);
+  }
+
+  // ---------- Pointer interaction ----------
+  function onPointerDown(e) {
+    if (running) return;
+    const cell = cellFromPoint(e.clientX, e.clientY);
+    if (!cell) return;
+    e.preventDefault();
+    gridEl.setPointerCapture(e.pointerId);
+    pointerDown = true;
+    const { r, c } = cell;
+
+    if (isStart(r, c)) {
+      dragMode = "moveStart";
+    } else if (isEnd(r, c)) {
+      dragMode = "moveEnd";
+    } else {
+      // editing walls: wipe any displayed result first
+      if (hasResult || gridEl.querySelector(".visited, .path")) clearVisualization();
+      dragMode = grid[r][c].isWall ? "erase" : "wall";
+      setWall(r, c, dragMode === "wall");
+    }
+  }
+
+  function onPointerMove(e) {
+    if (!pointerDown || running) return;
+    const cell = cellFromPoint(e.clientX, e.clientY);
+    if (!cell) return;
+    const { r, c } = cell;
+
+    if (dragMode === "wall" || dragMode === "erase") {
+      setWall(r, c, dragMode === "wall");
+    } else if (dragMode === "moveStart") {
+      if (grid[r][c].isWall || isEnd(r, c) || isStart(r, c)) return;
+      cellEls[start.r][start.c].classList.remove("start");
+      start = { r, c };
+      cellEls[r][c].classList.remove("visited", "path");
+      cellEls[r][c].classList.add("start");
+      if (hasResult) renderPathOnly();
+    } else if (dragMode === "moveEnd") {
+      if (grid[r][c].isWall || isStart(r, c) || isEnd(r, c)) return;
+      cellEls[end.r][end.c].classList.remove("end");
+      end = { r, c };
+      cellEls[r][c].classList.remove("visited", "path");
+      cellEls[r][c].classList.add("end");
+      if (hasResult) renderPathOnly();
+    }
+  }
+
+  function onPointerUp() {
+    pointerDown = false;
+    dragMode = null;
+  }
+
+  // ---------- Wire up ----------
+  function updateCaption() {
+    const info = ALGO_INFO[algo];
+    caption.innerHTML = "<b>" + info.name + "</b> · " + info.text;
+    tAlgo.textContent = info.name;
+  }
+
+  document.getElementById("algoSeg").addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b || running) return;
+    document.querySelectorAll("#algoSeg button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    algo = b.dataset.algo;
+    updateCaption();
+    if (hasResult) renderPathOnly();
+  });
+
+  document.getElementById("speedSeg").addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b || running) return;
+    document.querySelectorAll("#speedSeg button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    speed = b.dataset.speed;
+  });
+
+  btnRun.addEventListener("click", visualize);
+  document.getElementById("btnMaze").addEventListener("click", generateMaze);
+  document.getElementById("btnClearPath").addEventListener("click", () => { if (!running) clearVisualization(); });
+  document.getElementById("btnClearWalls").addEventListener("click", () => { if (!running) clearWalls(); });
+  document.getElementById("btnReset").addEventListener("click", () => { if (!running) resetAll(); });
+
+  gridEl.addEventListener("pointerdown", onPointerDown);
+  gridEl.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  gridEl.addEventListener("pointercancel", onPointerUp);
+
+  // keyboard: space / enter to visualize
+  document.addEventListener("keydown", e => {
+    if ((e.key === "Enter" || e.key === " ") && e.target === document.body) {
+      e.preventDefault();
+      visualize();
+    }
+  });
+
+  // ---------- Init ----------
+  buildGrid();
+  updateCaption();
+})();
+</script>
+</body>
+</html>
